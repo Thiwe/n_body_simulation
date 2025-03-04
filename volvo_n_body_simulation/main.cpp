@@ -42,10 +42,9 @@ public:
         : manager(manager), radius(manager->getRandRadius())
     {
         mass *= radius;
-        angle = sf::Angle(sf::radians(3.14));
+        angle = sf::Angle(sf::radians(M_PI_2));
         shape = sf::CircleShape(radius);
         shape.setFillColor(sf::Color::Green);
-        shape.setOrigin(sf::Vector2f({ manager->spawnPositionX, manager->spawnPositionY }));
     }
 
 
@@ -126,7 +125,7 @@ int main(int argc, char* argv[]) {
         if (spawnIntervall < 0) {
             std::cout << "somehting is spawning" << std::endl;
             spawnIntervall = initSpawnIntervall;
-            if (preSpawnedEntities[indexEntityToSpawn]) {
+            if (indexEntityToSpawn  != preSpawnedEntities.size()-1) {
                 entities.push_back(preSpawnedEntities[indexEntityToSpawn]);
                 indexEntityToSpawn++;
             }
@@ -139,49 +138,50 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-//void Entity::borderCollision()
-//{
-//    if (pos.x + radius > manager->screenWidth) {
-//        pos.x = pos.x; 
-//    }
-//    else if (pos.x + radius < 0) {
-//        pos.x = pos.x; 
-//    }
-//
-//    if (pos.y + radius > screenSize_.y) {
-//        pos.y = 0; 
-//    }
-//    else if (pos.y < 0) {
-//        pos.y = screenSize_.y; 
-//    }
-//}
-
-void Entity::applyGravity()
+void Entity::borderCollision()
 {
+    // Right wall collision
+    if (pos.x + radius > manager->screenWidth) {
+        pos.x = manager->screenWidth - radius;  // Prevent going out of bounds
+        vel.x *= -0.8f; // Reverse velocity with damping to simulate energy loss
+    }
+    // Left wall collision
+    else if (pos.x - radius < 0) {
+        pos.x = radius;
+        vel.x *= -0.8f;
+    }
 
+    // Bottom wall collision
+    if (pos.y + radius > manager->screenHeight) {
+        std::cout << "this is triggered " << std::endl;
+        pos.y = manager->screenHeight - radius;
+        vel.y *= -0.8f; // Reverse velocity to simulate bouncing
+    }
+    // Top wall collision
+    else if (pos.y - radius < 0) {
+        pos.y = radius;
+        vel.y *= -0.8f;
+    }
 }
 
 void Entity::update(float deltatime)
 {
     //just gravity
     //vel.x += -cos(0) * manager->gravity * deltatime;
-    vel.y += sin(M_PI_2) * manager->gravity * deltatime;
-
-
-    //angle = 
+    vel.y += manager->gravity * deltatime * 10;
 
     //pos.x += vel.x + cos(0) * deltatime;
-    pos.y += vel.y * sin(M_PI_2) * deltatime;
+    pos.y += vel.y * deltatime;
 
+    borderCollision();
 
 }
 
 void Entity::render(sf::RenderWindow& window)
 {
-    
-    transform.translate(pos).rotate(angle);
+    //transform.translate(pos);
     //wrapAround(sf::Vector2u(1200, 900)); // call wrap function after updating position
-
-    window.draw(shape, transform);
+    shape.setPosition(pos);
+    window.draw(shape);
 
 }
