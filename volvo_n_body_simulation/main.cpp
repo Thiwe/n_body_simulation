@@ -17,6 +17,9 @@ struct Rectangle {
         : x(_x), y(_y), width(_w), height(_h) {}
 };
 
+// Forward declaration of Entity
+class Entity;
+
 // The Quadtree class
 class QuadTree {
 public:
@@ -25,7 +28,7 @@ public:
     static const int MAX_LEVELS = 5;
 
     int level;                      // Current node level (0 is the root)
-    std::vector<Rectangle> objects; // Objects stored in this node
+    std::vector<Entity*> objects;   // Objects stored in this node
     Rectangle bounds;               // The region of space this node occupies
     QuadTree* nodes[4];             // Pointers to four subnodes
 
@@ -40,9 +43,9 @@ public:
 
     void clear();
     void split();
-    int getIndex(const Rectangle& pRect) const;
-    void insert(const Rectangle& pRect);
-    void retrieve(std::vector<Rectangle>& returnObjects, const Rectangle& pRect);
+    int getIndex(const Entity* entity) const;
+    void insert(Entity* entity);
+    void retrieve(std::vector<Entity*>& returnObjects, Entity* entity);
 
     // Destructor: clears the quadtree to free memory.
     ~QuadTree() {
@@ -120,7 +123,7 @@ int main(int argc, char* argv[]) {
     float spawnPositionX = std::stof(argv[7]);
     float spawnPositionY = std::stof(argv[8]);
 
-    //====== CHANGE THIS TO MAP ORT TUPLE ===========
+    ////====== CHANGE THIS TO MAP ORT TUPLE ===========
     std::vector<Entity*> preSpawnedEntities;
     for (int i = 0; i <= spawnLimit; i++) {
         preSpawnedEntities.push_back(new Entity(screenWidth, screenHeight, minRadius, maxRadius, spawnLimit, gravity, spawnPositionX, spawnPositionY));
@@ -129,14 +132,15 @@ int main(int argc, char* argv[]) {
     entities.push_back(preSpawnedEntities[0]);
 
 
-    float initSpawnIntervall = 0.05;
+    float initSpawnIntervall = 0.01;
     float spawnIntervall = initSpawnIntervall;
     int indexEntityToSpawn = 1; //start at one since we already spoawned 0
 
 
     sf::Clock clock;
     sf::RenderWindow window(sf::VideoMode({ screenWidth, screenHeight }), "SFML works!");
-
+    Rectangle rootRect = Rectangle(0, 0, screenWidth, screenHeight);
+    QuadTree* quadTree = new QuadTree(0, rootRect);
     while (window.isOpen())
     {
         //restart() returns a time object which ahve asSeconds as member
@@ -149,32 +153,38 @@ int main(int argc, char* argv[]) {
         }
 
         window.clear();
-        for (int i = 0; i < entities.size(); i++)
-        {
-            entities[i]->borderCollision();
-            for (int j = 0; j < entities.size(); j++) {
-                if (entities[i] == entities[j])
-                    continue;
-                entities[i]->entityCollision(entities[i], entities[j], deltaTime);
-            }
-            entities[i]->update(deltaTime);
+        quadTree->clear();
+        for (Entity* entity : entities) {
+            quadTree->insert(entity);
         }
-        for (auto entity : entities) {            
-
+        // 2. For each entity, retrieve potential collision candidates
+//    and then run your sphere collision detection.
+        for (Entity* entity : entities) {
+            entity->update(deltaTime);
+            entity->borderCollision();
+            std::vector<Entity*> candidates;
+            quadTree->retrieve(candidates, entity);
+            for (Entity* other : candidates) {
+                if (entity != other) {
+                    // Call your sphere collision function.
+                    entity->entityCollision(entity, other, deltaTime);
+                }
+            }
             entity->render(window);
         }
+
         //change the whole thing to map or tuple with <entity, bool used>
         if (spawnIntervall < 0) {
             spawnIntervall = initSpawnIntervall;
             if (indexEntityToSpawn  != preSpawnedEntities.size()-1) {
                 entities.push_back(preSpawnedEntities[indexEntityToSpawn]);
                 indexEntityToSpawn++;
-                std::cout << indexEntityToSpawn << std::endl;
-
             }
-            
         }
         spawnIntervall -= deltaTime;
+        float fps = (deltaTime > 0) ? 1.0f / deltaTime : 0.f;
+        std::cout << fps << std::endl;
+
         window.display();
     }
 
@@ -214,6 +224,8 @@ void Entity::entityCollision(Entity* first, Entity* second, float deltaTime) {
 
     if (distance < first->radius + second->radius) {
         // **Push apart**
+        if (distance == 0)
+            distance += 0.0001;
         sf::Vector2f normal = delta / distance; // Normalize direction
         first->pos += normal * (overlap / 2.f);
         second->pos -= normal * (overlap / 2.f);
@@ -288,33 +300,35 @@ void QuadTree::split()
 // Returns:
 //   0, 1, 2, or 3 if the object fits completely within a subnode,
 //   -1 if the object cannot completely fit within a child node.
-int QuadTree::getIndex(const Rectangle& pRect) const {
+int QuadTree::getIndex(const Entity* entity) const {
+    // Compute bounding box of the entity (circle)
+    float ex = entity->pos.x - entity->radius;
+    float ey = entity->pos.y - entity->radius;
+    float ewidth = 2 * entity->radius;
+    float eheight = 2 * entity->radius;
+
     int index = -1;
     float verticalMidpoint = bounds.x + (bounds.width / 2.0f);
     float horizontalMidpoint = bounds.y + (bounds.height / 2.0f);
 
-    // Object can completely fit within the top quadrants.
-    bool topQuadrant = (pRect.y < horizontalMidpoint && (pRect.y + pRect.height) < horizontalMidpoint);
-    // Object can completely fit within the bottom quadrants.
-    bool bottomQuadrant = (pRect.y > horizontalMidpoint);
+    // Check if it fits completely in the top quadrants.
+    bool topQuadrant = (ey < horizontalMidpoint && ey + eheight < horizontalMidpoint);
+    // Check if it fits completely in the bottom quadrants.
+    bool bottomQuadrant = (ey > horizontalMidpoint);
 
-    // Object can completely fit within the left quadrants.
-    if (pRect.x < verticalMidpoint && (pRect.x + pRect.width) < verticalMidpoint) {
-        if (topQuadrant) {
+    // Check left quadrants.
+    if (ex < verticalMidpoint && ex + ewidth < verticalMidpoint) {
+        if (topQuadrant)
             index = 1;
-        }
-        else if (bottomQuadrant) {
+        else if (bottomQuadrant)
             index = 2;
-        }
     }
-    // Object can completely fit within the right quadrants.
-    else if (pRect.x > verticalMidpoint) {
-        if (topQuadrant) {
+    // Check right quadrants.
+    else if (ex > verticalMidpoint) {
+        if (topQuadrant)
             index = 0;
-        }
-        else if (bottomQuadrant) {
+        else if (bottomQuadrant)
             index = 3;
-        }
     }
     return index;
 }
@@ -324,17 +338,17 @@ int QuadTree::getIndex(const Rectangle& pRect) const {
 // If the node already has child nodes, it tries to pass the object 
 // to the appropriate child.
 // Otherwise, it stores the object here and splits if necessary.
-void QuadTree::insert(const Rectangle& pRect)
+void QuadTree::insert(Entity* entity)
 {
     if (nodes[0] != nullptr) {
-        int index = getIndex(pRect);
+        int index = getIndex(entity);
         if (index != -1) {
-            nodes[index]->insert(pRect);
+            nodes[index]->insert(entity);
             return;
         }
     }
     // If we can't fully fit in a subnode, store it here.
-    objects.push_back(pRect);
+    objects.push_back(entity);
 
     // If the number of objects exceeds the capacity and we haven't reached the maximum level,
     // split the node and redistribute objects.
@@ -348,7 +362,7 @@ void QuadTree::insert(const Rectangle& pRect)
         while (i < objects.size()) {
             int index = getIndex(objects[i]);
             if (index != -1) {
-                Rectangle obj = objects[i];
+                Entity* obj = objects[i];
                 objects.erase(objects.begin() + i);
                 nodes[index]->insert(obj);
                 // Do not increment i since the vector has shifted.
@@ -361,12 +375,12 @@ void QuadTree::insert(const Rectangle& pRect)
 }
 
 
-void QuadTree::retrieve(std::vector<Rectangle>& returnObjects, const Rectangle& pRect) {
-    int index = getIndex(pRect);
+void QuadTree::retrieve(std::vector<Entity*>& returnObjects, Entity* entity) {
+    int index = getIndex(entity);
     if (index != -1 && nodes[0] != nullptr) {
-        nodes[index]->retrieve(returnObjects, pRect);
+        nodes[index]->retrieve(returnObjects, entity);
     }
     // Add objects from the current node.
     returnObjects.insert(returnObjects.end(), objects.begin(), objects.end());
 }
-}
+
