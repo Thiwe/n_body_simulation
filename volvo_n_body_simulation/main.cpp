@@ -9,52 +9,69 @@
 
 #define log(x, y) std::cout << x << y << std::endl;
 
-int MAX_LVL = 8;
+// A simple Rectangle class
+struct Rectangle {
+    float x, y, width, height;
 
-// Forward declarations - this is what was missing
-class SimulationManager;
-class Entity;
-struct Node;
-
-struct Node {
-    static std::queue<Node*> NodePool;
-
-    int x, y, width, height, lvl;
-
-    Node() : x(0), y(0), width(0), height(0), lvl(0) {}
-
-    Node(int _x, int _y, int _w, int _h, int _lvl) : x(_x), y(_y), width(_w), height(_h), lvl(_lvl)
-    {
-        //add entities from main function to this 
-    }
-
-    std::vector<Node*> children;
-    std::vector<Entity*> entities;
-
-    //lets us add a new entity to the quadtree
-    void Add(Entity& _entity);
-
-
-public:
-    //tests whether an entity is inside the bounding rectangle of the node
-    int Inside(Entity& _entity);
-
-    //used to reset a node
-    void Set(int _x, int _y, int _w, int _h, int _lvl);
-
+    Rectangle(float _x, float _y, float _w, float _h)
+        : x(_x), y(_y), width(_w), height(_h) {}
 };
 
-class SimulationManager {
+// The Quadtree class
+class QuadTree {
 public:
-    SimulationManager(int screenWidth, int screenHeight, float minRadius, float maxRadius, float spawnLimit, float gravity, float spawnPositionX, float spawnPositionY)
-        : screenWidth(screenWidth),
-        screenHeight(screenHeight),
-        minRadius(minRadius),
-        maxRadius(maxRadius),
-        spawnLimit(spawnLimit),
-        gravity(gravity),
-        spawnPositionX(spawnPositionX),
-        spawnPositionY(spawnPositionY) {}
+    // Maximum objects per node and maximum levels before stopping subdivision.
+    static const int MAX_OBJECTS = 10;
+    static const int MAX_LEVELS = 5;
+
+    int level;                      // Current node level (0 is the root)
+    std::vector<Rectangle> objects; // Objects stored in this node
+    Rectangle bounds;               // The region of space this node occupies
+    QuadTree* nodes[4];             // Pointers to four subnodes
+
+    // Constructor: initializes level, bounds, and nulls out the subnodes.
+    QuadTree(int pLevel, const Rectangle& pBounds)
+        : level(pLevel), bounds(pBounds)
+    {
+        for (int i = 0; i < 4; i++) {
+            nodes[i] = nullptr;
+        }
+    }
+
+    void clear();
+    void split();
+    int getIndex(const Rectangle& pRect) const;
+    void insert(const Rectangle& pRect);
+    void retrieve(std::vector<Rectangle>& returnObjects, const Rectangle& pRect);
+
+    // Destructor: clears the quadtree to free memory.
+    ~QuadTree() {
+        clear();
+    }
+};
+
+class Entity {
+public:
+
+     Entity(int screenWidth, int screenHeight, float minRadius, float maxRadius, float spawnLimit, float gravity, float spawnPositionX, float spawnPositionY)
+        :   screenWidth(screenWidth),
+            screenHeight(screenHeight),
+            minRadius(minRadius),
+            maxRadius(maxRadius),
+            spawnLimit(spawnLimit),
+            gravity(gravity),
+            spawnPositionX(spawnPositionX),
+            spawnPositionY(spawnPositionY) 
+     {
+         radius = getRandRadius();
+         pos = sf::Vector2f{ spawnPositionX, spawnPositionY };
+         shape = sf::CircleShape(radius);
+         shape.setOrigin(sf::Vector2f{ radius, radius });
+         shape.setPosition(pos);
+         shape.setFillColor(sf::Color::Green);
+         shape.setPointCount(20);
+         vel.x = 1.f;
+     }
 
     float getRandRadius() {
         // Thread-local to avoid contention in multithreaded code
@@ -64,9 +81,17 @@ public:
     };
 
 
-    void ConstructQuadTree(Node* root, int part_count, std::vector<Entity*> entities, float deltaTime);
-
 public: //should ´be private
+    void update(float deltatime);
+    void render(sf::RenderWindow& window);
+    void borderCollision();
+    void entityCollision(Entity* first, Entity* second, float deltaTime);
+
+    sf::Vector2f pos;
+    sf::Vector2f vel;
+    sf::CircleShape shape;
+    float radius;
+
     int screenWidth;
     int screenHeight;
     float minRadius;
@@ -75,43 +100,9 @@ public: //should ´be private
     float gravity;
     float spawnPositionX;
     float spawnPositionY;
-};
-
-class Entity {
-public:
-    Entity(SimulationManager* manager)
-        : manager(manager), radius(manager->getRandRadius()), pos(manager->spawnPositionX, manager->spawnPositionY)
-    {
-        shape = sf::CircleShape(radius);
-        shape.setOrigin(sf::Vector2f{ radius, radius });
-        shape.setPosition(sf::Vector2f{ manager->spawnPositionX, manager->spawnPositionY });
-        shape.setFillColor(sf::Color::Green);
-        shape.setPointCount(20);
-        vel.x = 1.f;
-    }
-
-    void update(float deltatime);
-    void render(sf::RenderWindow& window);
-    void borderCollision();
-    void entityCollision(Entity* first, Entity* second, float deltaTime);
-
-
-public: //should be oprivate but for speedy efficiency
-    SimulationManager* manager = nullptr;
-    sf::Vector2f pos;
-    sf::Vector2f vel;
-    sf::CircleShape shape;
-    float radius;
 
 };
 
-std::queue<Node*> Node::NodePool;
-void InitializeNodePool(int initialSize = 1000)
-{
-    for (int i = 0; i < initialSize; i++) {
-        Node::NodePool.push(new Node());
-    }
-}
 
 //Window size, min/max circle radius values, spawn limit, and gravity are given as command line arguments to the program.
 int main(int argc, char* argv[]) {
@@ -129,14 +120,10 @@ int main(int argc, char* argv[]) {
     float spawnPositionX = std::stof(argv[7]);
     float spawnPositionY = std::stof(argv[8]);
 
-    // Initialize the node pool
-    InitializeNodePool(10000);
-   
-    SimulationManager simManager(screenWidth, screenHeight, minRadius, maxRadius, spawnLimit, gravity, spawnPositionX, spawnPositionY);
     //====== CHANGE THIS TO MAP ORT TUPLE ===========
     std::vector<Entity*> preSpawnedEntities;
     for (int i = 0; i <= spawnLimit; i++) {
-        preSpawnedEntities.push_back(new Entity(&simManager));
+        preSpawnedEntities.push_back(new Entity(screenWidth, screenHeight, minRadius, maxRadius, spawnLimit, gravity, spawnPositionX, spawnPositionY));
     }
     std::vector<Entity*> entities;
     entities.push_back(preSpawnedEntities[0]);
@@ -150,8 +137,6 @@ int main(int argc, char* argv[]) {
     sf::Clock clock;
     sf::RenderWindow window(sf::VideoMode({ screenWidth, screenHeight }), "SFML works!");
 
-    Node root;
-
     while (window.isOpen())
     {
         //restart() returns a time object which ahve asSeconds as member
@@ -164,14 +149,22 @@ int main(int argc, char* argv[]) {
         }
 
         window.clear();
-        simManager.ConstructQuadTree(&root, spawnLimit, entities, deltaTime);
+        for (int i = 0; i < entities.size(); i++)
+        {
+            entities[i]->borderCollision();
+            for (int j = 0; j < entities.size(); j++) {
+                if (entities[i] == entities[j])
+                    continue;
+                entities[i]->entityCollision(entities[i], entities[j], deltaTime);
+            }
+            entities[i]->update(deltaTime);
+        }
         for (auto entity : entities) {            
 
             entity->render(window);
         }
         //change the whole thing to map or tuple with <entity, bool used>
         if (spawnIntervall < 0) {
-            std::cout << "somehting is spawning" << std::endl;
             spawnIntervall = initSpawnIntervall;
             if (indexEntityToSpawn  != preSpawnedEntities.size()-1) {
                 entities.push_back(preSpawnedEntities[indexEntityToSpawn]);
@@ -191,8 +184,8 @@ int main(int argc, char* argv[]) {
 void Entity::borderCollision()
 {
     // Right wall collision
-    if (pos.x + radius > manager->screenWidth) {
-        pos.x = manager->screenWidth - radius;  // Prevent going out of bounds
+    if (pos.x + radius > screenWidth) {
+        pos.x = screenWidth - radius;  // Prevent going out of bounds
         vel.x *= -0.8f; // Reverse velocity with damping to simulate energy loss
     }
     // Left wall collision
@@ -202,8 +195,8 @@ void Entity::borderCollision()
     }
 
     // Bottom wall collision
-    if (pos.y + radius > manager->screenHeight) {
-        pos.y = manager->screenHeight - radius;
+    if (pos.y + radius > screenHeight) {
+        pos.y = screenHeight - radius;
         vel.y *= -0.8f; // Reverse velocity to simulate bouncing
     }
     // Top wall collision
@@ -218,13 +211,6 @@ void Entity::entityCollision(Entity* first, Entity* second, float deltaTime) {
     sf::Vector2f delta = first->pos - second->pos;
     float distance = std::sqrt(delta.x * delta.x + delta.y * delta.y);
     float overlap = (first->radius + second->radius) - distance;
-
-
- /* log("deltax is : ", delta.x);
-    log("deltay is : ", delta.y);
-    log("distance is : ", distance);
-    log("overlap is : ", overlap);
-*/
 
     if (distance < first->radius + second->radius) {
         // **Push apart**
@@ -247,30 +233,12 @@ void Entity::entityCollision(Entity* first, Entity* second, float deltaTime) {
 
 }
 
-void SimulationManager::ConstructQuadTree(Node* root, int part_count, std::vector<Entity*> entities, float deltaTime)
-{
-    root->Set(0, 0, root->width, root->height, 0);
-
-    for (int i = 0; i < entities.size(); i++)
-    {
-        entities[i]->borderCollision();
-        //entities[i]->borderCollision();
-        root->Add(*entities[i]);
-        entities[i]->update(deltaTime);
-        for (int j = 0; j < entities.size(); j++) {
-            if (entities[i] == entities[j])
-                break;
-            entities[i]->entityCollision(entities[i], entities[j], deltaTime);
-        }
-        root->Add(*entities[i]);
-    }
-}
 
 void Entity::update(float deltatime)
 {
     //just gravity
     //vel.x += -cos(0) * manager->gravity * deltatime;
-    vel.y += manager->gravity * deltatime * 10;
+    vel.y += gravity * 10 * deltatime;
 
     pos.x += vel.x * deltatime;
     pos.y += vel.y * deltatime;
@@ -285,89 +253,120 @@ void Entity::render(sf::RenderWindow& window)
 
 }
 
-void Node::Add(Entity& _entity)
+void QuadTree::clear()
 {
-    if (entities.size() < 4 || lvl == MAX_LVL)
-    {
-        entities.push_back(&_entity);
-    }
-    else
-    {
-        if (children.size() == 0)
-        {
-            // Check if we have enough nodes
-            if (NodePool.size() < 4) {
-                // Add more nodes to the pool or don't subdivide
-                return;
-            }
-            Node* n1 = NodePool.front(); 
-            NodePool.pop();
-            Node* n2 = NodePool.front();
-            NodePool.pop();
-            Node* n3 = NodePool.front();
-            NodePool.pop();
-            Node* n4 = NodePool.front();
-            NodePool.pop();
-
-            n1->Set(x, y, width / 2, height / 2, lvl + 1);
-            children.push_back(n1);
-            n2->Set(x + width / 2, y, width / 2, height / 2, lvl + 1);
-            children.push_back(n2);
-            n3->Set(x, y + height / 2, width / 2, height / 2, lvl + 1);
-            children.push_back(n3);
-            n4->Set(x + width / 2, y + height / 2, width / 2, height / 2, lvl + 1);
-            children.push_back(n4);
-
-
-            for (auto* entity : entities)
-            {
-                for (auto* childNode : children)
-                {
-                    if (childNode->Inside(*entity))
-                    {
-                        childNode->Add(*entity);
-                    } 
-                }
-            }
+    objects.clear();
+    for (int i = 0; i < 4; i++) {
+        if (nodes[i] != nullptr) {
+            nodes[i]->clear();
+            delete nodes[i];
+            nodes[i] = nullptr;
         }
-
-        for (auto* childNode : children)
-        {
-            if (childNode->Inside(_entity))
-            {
-                childNode->Add(_entity);
-            }
-        }
-
     }
 }
 
-//checks whether part of the bounding circle of the entity falls within the bounding region of the node.
-int Node::Inside(Entity& _entity)
+/*
+* Splits the node into 4 subnodes
+*/
+void QuadTree::split()
 {
-    float _px0 = _entity.pos.x - _entity.radius;
-    float _py0 = _entity.pos.y - _entity.radius;
-    float _px1 = _entity.pos.x + _entity.radius;
-    float _py1 = _entity.pos.y + _entity.radius;
+    int subWidth = static_cast<int>(bounds.width / 2);
+    int subHeight = static_cast<int>(bounds.height / 2);
+    int x = static_cast<int>(bounds.x);
+    int y = static_cast<int>(bounds.y);
+
+    // Create the four subnodes with their respective bounds.
+    nodes[0] = new QuadTree(level + 1, Rectangle(x + subWidth, y, subWidth, subHeight));
+    nodes[1] = new QuadTree(level + 1, Rectangle(x, y, subWidth, subHeight));
+    nodes[2] = new QuadTree(level + 1, Rectangle(x, y + subHeight, subWidth, subHeight));
+    nodes[3] = new QuadTree(level + 1, Rectangle(x + subWidth, y + subHeight, subWidth, subHeight));
 
 
-    if ((_px0 >= x && _px0 <= (x + width)) || (_px1 >= x && _px1 <= (x + width)) &&
-        (_py0 >= y && _py0 <= (y + height)) || (_py1 >= y && _py1 <= (y + height)))
-        return 1;
-    else
-        return 0;
 }
 
-void Node::Set(int _x, int _y, int _w, int _h, int _lvl)
-{
-    for (auto child : children)
-        NodePool.push(child);
-    children.clear();
-    entities.clear();
-    x = _x;
-    y = _y;
-    width = _w;
-    height = _h;
-    lvl = _lvl;
+// Determine which node the object belongs to.
+// Returns:
+//   0, 1, 2, or 3 if the object fits completely within a subnode,
+//   -1 if the object cannot completely fit within a child node.
+int QuadTree::getIndex(const Rectangle& pRect) const {
+    int index = -1;
+    float verticalMidpoint = bounds.x + (bounds.width / 2.0f);
+    float horizontalMidpoint = bounds.y + (bounds.height / 2.0f);
+
+    // Object can completely fit within the top quadrants.
+    bool topQuadrant = (pRect.y < horizontalMidpoint && (pRect.y + pRect.height) < horizontalMidpoint);
+    // Object can completely fit within the bottom quadrants.
+    bool bottomQuadrant = (pRect.y > horizontalMidpoint);
+
+    // Object can completely fit within the left quadrants.
+    if (pRect.x < verticalMidpoint && (pRect.x + pRect.width) < verticalMidpoint) {
+        if (topQuadrant) {
+            index = 1;
+        }
+        else if (bottomQuadrant) {
+            index = 2;
+        }
+    }
+    // Object can completely fit within the right quadrants.
+    else if (pRect.x > verticalMidpoint) {
+        if (topQuadrant) {
+            index = 0;
+        }
+        else if (bottomQuadrant) {
+            index = 3;
+        }
+    }
+    return index;
 }
 
+
+// Insert the object into the quadtree.
+// If the node already has child nodes, it tries to pass the object 
+// to the appropriate child.
+// Otherwise, it stores the object here and splits if necessary.
+void QuadTree::insert(const Rectangle& pRect)
+{
+    if (nodes[0] != nullptr) {
+        int index = getIndex(pRect);
+        if (index != -1) {
+            nodes[index]->insert(pRect);
+            return;
+        }
+    }
+    // If we can't fully fit in a subnode, store it here.
+    objects.push_back(pRect);
+
+    // If the number of objects exceeds the capacity and we haven't reached the maximum level,
+    // split the node and redistribute objects.
+    if (objects.size() > MAX_OBJECTS && level < MAX_LEVELS) {
+        if (nodes[0] == nullptr) {
+            split();
+        }
+
+        // Iterate over objects and move those that fit completely into a child node.
+        int i = 0;
+        while (i < objects.size()) {
+            int index = getIndex(objects[i]);
+            if (index != -1) {
+                Rectangle obj = objects[i];
+                objects.erase(objects.begin() + i);
+                nodes[index]->insert(obj);
+                // Do not increment i since the vector has shifted.
+            }
+            else {
+                i++;
+            }
+        }
+    }
+}
+
+
+void QuadTree::retrieve(std::vector<Rectangle>& returnObjects, const Rectangle& pRect) {
+    int index = getIndex(pRect);
+    if (index != -1 && nodes[0] != nullptr) {
+        nodes[index]->retrieve(returnObjects, pRect);
+    }
+    // Add objects from the current node.
+    returnObjects.insert(returnObjects.end(), objects.begin(), objects.end());
+}
+}
