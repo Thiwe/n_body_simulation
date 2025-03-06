@@ -3,6 +3,8 @@
 #include <vector>
 #include <random>
 #include <queue>
+#include <thread>
+#include <functional>
 #define _USE_MATH_DEFINES
 #include <math.h>
 #include <SFML/Graphics.hpp>
@@ -90,11 +92,14 @@ public: //should ´be private
     void render(sf::RenderWindow& window);
     void borderCollision();
     void entityCollision(Entity* first, Entity* second, float deltaTime);
+    void checkIdle(float threshold = 0.1f);
 
     sf::Vector2f pos;
     sf::Vector2f vel;
     sf::CircleShape shape;
     float radius;
+
+    bool idle = false;  // New flag
 
     int screenWidth;
     int screenHeight;
@@ -104,9 +109,17 @@ public: //should ´be private
     float gravity;
     float spawnPositionX;
     float spawnPositionY;
+    bool active = false;
 
 };
 
+
+//decalre a threadpool to use on my entity class
+
+
+
+static int idleFrameCounter = 0;  // Declare correctly
+std::vector<std::thread> collisionThreads;  // Store collision threads
 
 //Window size, min/max circle radius values, spawn limit, and gravity are given as command line arguments to the program.
 int main(int argc, char* argv[]) {
@@ -124,14 +137,10 @@ int main(int argc, char* argv[]) {
     float spawnPositionX = std::stof(argv[7]);
     float spawnPositionY = std::stof(argv[8]);
 
-    ////====== CHANGE THIS TO MAP ORT TUPLE ===========
-    std::vector<Entity*> preSpawnedEntities;
-    for (int i = 0; i <= spawnLimit; i++) {
-        preSpawnedEntities.push_back(new Entity(screenWidth, screenHeight, minRadius, maxRadius, spawnLimit, gravity, spawnPositionX, spawnPositionY));
-    }
     std::vector<Entity*> entities;
-    entities.push_back(preSpawnedEntities[0]);
-
+    for (int i = 0; i <= spawnLimit; i++) {
+        entities.push_back(new Entity(screenWidth, screenHeight, minRadius, maxRadius, spawnLimit, gravity, spawnPositionX, spawnPositionY));
+    }
 
     float initSpawnIntervall = 0.01;
     float spawnIntervall = initSpawnIntervall;
@@ -142,6 +151,8 @@ int main(int argc, char* argv[]) {
     sf::RenderWindow window(sf::VideoMode({ screenWidth, screenHeight }), "SFML works!");
     Rectangle rootRect(0, 0, screenWidth, screenHeight);
     QuadTree* quadTree = new QuadTree(0, rootRect);
+
+
     while (window.isOpen())
     {
         //restart() returns a time object which ahve asSeconds as member
@@ -149,43 +160,73 @@ int main(int argc, char* argv[]) {
         
         while (const std::optional event = window.pollEvent())
         {
-            if (event->is<sf::Event::Closed>() || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape))
+            if (event->is<sf::Event::Closed>() || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape)) {
+                std::cout << indexEntityToSpawn << std::endl;
                 window.close();
+            }
         }
 
         window.clear();
         quadTree->clear();
+
+
         for (Entity* entity : entities) {
-            quadTree->insert(entity);
-            entity->update(deltaTime);
-            entity->borderCollision();
-            std::vector<Entity*> candidates;
-            quadTree->retrieve(candidates, entity);
-            for (Entity* other : candidates) {
-                if (entity != other) {
-                    // Call your sphere collision function.
-                    entity->entityCollision(entity, other, deltaTime);
+            if (entity->active) {
+                quadTree->insert(entity);
+                entity->update(deltaTime);
+                entity->checkIdle(200);  // Check if entity is idle
+
+                // Run border collision in a separate thread
+				//entity->borderCollision();
+
+                //std::vector<Entity*> candidates;
+                //quadTree->retrieve(candidates, entity);
+                //for (Entity* other : candidates) {
+                //    if (entity != other) {
+                //        // Call your sphere collision function.
+                //        entity->entityCollision(entity, other, deltaTime);
+                //    }
+                //}
+                // Only check collision every 10 frames for idle entities
+
+                collisionThreads.emplace_back(&Entity::borderCollision, entity);
+                if (!entity->idle || idleFrameCounter % 30 == 0) {
+                    std::vector<Entity*> candidates;
+                    quadTree->retrieve(candidates, entity);
+
+                    for (Entity* other : candidates) {
+                        if (entity != other) {
+                            collisionThreads.emplace_back(&Entity::entityCollision, entity, entity, other, deltaTime);
+                            //entity->entityCollision(entity, other, deltaTime);
+                        }
+                    }
                 }
+                
+                entity->render(window);
+
             }
-            entity->render(window);
         }
-        // 2. For each entity, retrieve potential collision candidates
-//    and then run your sphere collision detection.
+        // Wait for all collision threads to finish
+        for (std::thread& t : collisionThreads) {
+            if (t.joinable()) t.join();
+        }
+
+        idleFrameCounter++;  // Correctly increment
        
 
-        //change the whole thing to map or tuple with <entity, bool used>
         if (spawnIntervall < 0) {
             spawnIntervall = initSpawnIntervall;
-            if (indexEntityToSpawn  != preSpawnedEntities.size()-1) {
-                entities.push_back(preSpawnedEntities[indexEntityToSpawn]);
+            if (indexEntityToSpawn  < entities.size()) {
+                entities[indexEntityToSpawn]->active = true;
                 indexEntityToSpawn++;
-                std::cout << indexEntityToSpawn << std::endl;
-
+                
             }
         }
         spawnIntervall -= deltaTime;
-        float fps = (deltaTime > 0) ? 1.0f / deltaTime : 0.f;
-        //std::cout << fps << std::endl;
+        /*float fps = (deltaTime > 0) ? 1.0f / deltaTime : 0.f;
+		float lowFPS = 1000.f;
+        lowFPS = fps < lowFPS ? fps : lowFPS;
+        std::cout << lowFPS << std::endl;*/
 
         window.display();
     }
@@ -257,6 +298,8 @@ void Entity::update(float deltatime)
     pos.x += vel.x * deltatime;
     pos.y += vel.y * deltatime;
 
+    
+
 }
 
 void Entity::render(sf::RenderWindow& window)
@@ -265,6 +308,16 @@ void Entity::render(sf::RenderWindow& window)
     shape.setPosition(pos);
     window.draw(shape);
 
+}
+
+void Entity::checkIdle(float threshold) {
+	//std::cout << vel.x << " " << vel.y << std::endl;
+    if (std::abs(vel.x) < threshold && std::abs(vel.y) < threshold) {
+        idle = true;
+    }
+    else {
+        idle = false;
+    }
 }
 
 void QuadTree::clear()
@@ -304,29 +357,27 @@ void QuadTree::split()
 //   -1 if the object cannot completely fit within a child node.
 int QuadTree::getIndex(const Entity* entity) const {
     // Compute bounding box of the entity (circle)
-    float ex = entity->pos.x - entity->radius;
-    float ey = entity->pos.y - entity->radius;
-    float ewidth = 2 * entity->radius;
-    float eheight = 2 * entity->radius;
+    float circleBounds = entity->pos.x - entity->radius;
+    float diameter = 2 * entity->radius;
 
     int index = -1;
     float verticalMidpoint = rectangleBounds.x + (rectangleBounds.width / 2.0f);
     float horizontalMidpoint = rectangleBounds.y + (rectangleBounds.height / 2.0f);
 
     // Check if it fits completely in the top quadrants.
-    bool topQuadrant = (ey < horizontalMidpoint && ey + eheight < horizontalMidpoint);
+    bool topQuadrant = (circleBounds < horizontalMidpoint && circleBounds + diameter < horizontalMidpoint);
     // Check if it fits completely in the bottom quadrants.
-    bool bottomQuadrant = (ey > horizontalMidpoint);
+    bool bottomQuadrant = (circleBounds > horizontalMidpoint);
 
     // Check left quadrants.
-    if (ex < verticalMidpoint && ex + ewidth < verticalMidpoint) {
+    if (circleBounds < verticalMidpoint && circleBounds + diameter < verticalMidpoint) {
         if (topQuadrant)
             index = 1;
         else if (bottomQuadrant)
             index = 2;
     }
     // Check right quadrants.
-    else if (ex > verticalMidpoint) {
+    else if (circleBounds > verticalMidpoint) {
         if (topQuadrant)
             index = 0;
         else if (bottomQuadrant)
