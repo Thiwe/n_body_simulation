@@ -29,7 +29,6 @@ public:
     static const int MAX_OBJECTS = 4;
     static const int MAX_LEVELS = 8;
 
-
    
     QuadTree(int level, const Rectangle& rectangleBounds)
         : level(level), rectangleBounds(rectangleBounds)
@@ -49,6 +48,7 @@ public:
     int getIndex(const Entity* entity) const;
     void insert(Entity* entity);
     void retrieve(std::vector<Entity*>& returnObjects, Entity* entity);
+    void draw(sf::RenderWindow& window);
 
     // Destructor: clears the quadtree to free memory.
     ~QuadTree() {
@@ -91,7 +91,7 @@ public: //should ´be private
     void update(float deltatime);
     void render(sf::RenderWindow& window);
     void borderCollision();
-    void entityCollision(Entity* first, Entity* second, float deltaTime);
+    void entityCollision(Entity* first, Entity* second, float deltaTime, sf::RenderWindow& window);
     void checkIdle(float threshold = 0.1f);
 
     sf::Vector2f pos;
@@ -110,19 +110,23 @@ public: //should ´be private
     float spawnPositionX;
     float spawnPositionY;
     bool active = false;
+	static float speedMod;
 
 };
 
-
-//decalre a threadpool to use on my entity class
-
-
-
 static int idleFrameCounter = 0;  // Declare correctly
-std::vector<std::thread> collisionThreads;  // Store collision threads
+static int debugThreshold = 10;
+static bool tabPressed = false;
+static bool pause = false;
+static int maxCollsionCheckLevels = 4;
+float Entity::speedMod = 1.f;
+
+
+
 
 //Window size, min/max circle radius values, spawn limit, and gravity are given as command line arguments to the program.
 int main(int argc, char* argv[]) {
+   
     if (argc < 9) {
         std::cout << "Usage: " << argv[0] << " <window_size> <spawn_position> <input_variable>" << std::endl;
         return 1;
@@ -142,7 +146,7 @@ int main(int argc, char* argv[]) {
         entities.push_back(new Entity(screenWidth, screenHeight, minRadius, maxRadius, spawnLimit, gravity, spawnPositionX, spawnPositionY));
     }
 
-    float initSpawnIntervall = 0.01;
+    float initSpawnIntervall = 0.001;
     float spawnIntervall = initSpawnIntervall;
     int indexEntityToSpawn = 1; //start at one since we already spoawned 0
 
@@ -152,11 +156,9 @@ int main(int argc, char* argv[]) {
     Rectangle rootRect(0, 0, screenWidth, screenHeight);
     QuadTree* quadTree = new QuadTree(0, rootRect);
 
-
     while (window.isOpen())
     {
         //restart() returns a time object which ahve asSeconds as member
-        float deltaTime = clock.restart().asSeconds();
         
         while (const std::optional event = window.pollEvent())
         {
@@ -166,67 +168,99 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        window.clear();
-        quadTree->clear();
 
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space)) {
+            pause = !pause;
+            Entity::speedMod = 0.01f;
 
-        for (Entity* entity : entities) {
-            if (entity->active) {
-                quadTree->insert(entity);
-                entity->update(deltaTime);
-                entity->checkIdle(200);  // Check if entity is idle
+        }
+        if (!pause) {
+            float deltaTime = clock.restart().asSeconds();
+            window.clear();
+            quadTree->clear();
+            
 
-                // Run border collision in a separate thread
-				//entity->borderCollision();
+            for (Entity* entity : entities) {
+                if (entity->active) {
+                    quadTree->insert(entity);
+                    entity->update(deltaTime);
+                    entity->checkIdle(200);  // Check if entity is idle
+                    // Run border collision 
+				    entity->borderCollision();
 
-                //std::vector<Entity*> candidates;
-                //quadTree->retrieve(candidates, entity);
-                //for (Entity* other : candidates) {
-                //    if (entity != other) {
-                //        // Call your sphere collision function.
-                //        entity->entityCollision(entity, other, deltaTime);
-                //    }
-                //}
-                // Only check collision every 10 frames for idle entities
+                    //std::vector<Entity*> candidates;
+                    //quadTree->retrieve(candidates, entity);
+                    //for (Entity* other : candidates) {
+                    //    if (entity != other) {
+                    //        // Call your sphere collision function.
+                    //        entity->entityCollision(entity, other, deltaTime);
+                    //    }
+                    //}
+                    // Only check collision every 10 frames for idle entities
 
-                collisionThreads.emplace_back(&Entity::borderCollision, entity);
-                if (!entity->idle || idleFrameCounter % 30 == 0) {
-                    std::vector<Entity*> candidates;
-                    quadTree->retrieve(candidates, entity);
+                    //borderCollisionThreads.emplace_back(&Entity::borderCollision, entity);
+                    if (!entity->idle || idleFrameCounter % 30 == 0) {
+                        std::vector<Entity*> candidates;
+                        quadTree->retrieve(candidates, entity);
+					    maxCollsionCheckLevels = 4;
+                        for (Entity* other : candidates) {
+                            if (entity != other) {
+                                if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Tab))
+                                    tabPressed = !tabPressed;
 
-                    for (Entity* other : candidates) {
-                        if (entity != other) {
-                            collisionThreads.emplace_back(&Entity::entityCollision, entity, entity, other, deltaTime);
-                            //entity->entityCollision(entity, other, deltaTime);
+                                if (tabPressed)
+                                {
+                                    std::array line =
+                                    {
+                                        sf::Vertex{entity->pos}                                                                                                                                  ,
+                                        sf::Vertex{other->pos}
+                                    };
+
+                                    window.draw(line.data(), line.size(), sf::PrimitiveType::Lines);
+                                }
+                                //collisionThreads.emplace_back(&Entity::entityCollision, entity, entity, other, deltaTime);
+                                entity->entityCollision(entity, other, deltaTime, window);
+                            }
                         }
                     }
-                }
                 
-                entity->render(window);
 
+                    entity->render(window);
+
+                }
             }
-        }
-        // Wait for all collision threads to finish
-        for (std::thread& t : collisionThreads) {
-            if (t.joinable()) t.join();
-        }
+            //// Wait for all collision threads to finish
+            //for (std::thread& t : collisionThreads) {
+            //    if (t.joinable()) t.join();
+            //}
 
-        idleFrameCounter++;  // Correctly increment
+            //// Wait for all collision threads to finish
+            //for (std::thread& t : collisionThreads) {
+            //    if (t.joinable()) t.join();
+            //}
+
+            idleFrameCounter++;  // Correctly increment
        
 
-        if (spawnIntervall < 0) {
-            spawnIntervall = initSpawnIntervall;
-            if (indexEntityToSpawn  < entities.size()) {
-                entities[indexEntityToSpawn]->active = true;
-                indexEntityToSpawn++;
+            if (spawnIntervall < 0) {
+                spawnIntervall = initSpawnIntervall;
+                if (indexEntityToSpawn  < entities.size()) {
+                    entities[indexEntityToSpawn]->active = true;
+                    indexEntityToSpawn++;
                 
+                }
             }
+		    debugThreshold -= deltaTime;
+            spawnIntervall -= deltaTime;
+            /*float fps = (deltaTime  ? 1.0f / deltaTime : 0.f;
+		    float lowFPS = 1000.f;
+            lowFPS = fps < lowFPS ? fps : lowFPS;
+            std::cout << lowFPS << std::endl;*/
+
         }
-        spawnIntervall -= deltaTime;
-        /*float fps = (deltaTime > 0) ? 1.0f / deltaTime : 0.f;
-		float lowFPS = 1000.f;
-        lowFPS = fps < lowFPS ? fps : lowFPS;
-        std::cout << lowFPS << std::endl;*/
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift)) {
+            quadTree->draw(window);
+        }
 
         window.display();
     }
@@ -259,11 +293,13 @@ void Entity::borderCollision()
     }
 }
 
-void Entity::entityCollision(Entity* first, Entity* second, float deltaTime) {
+void Entity::entityCollision(Entity* first, Entity* second, float deltaTime, sf::RenderWindow& window) {
 
     sf::Vector2f delta = first->pos - second->pos;
     float distance = std::sqrt(delta.x * delta.x + delta.y * delta.y);
     float overlap = (first->radius + second->radius) - distance;
+
+    
 
     if (distance < first->radius + second->radius) {
         // **Push apart**
@@ -291,12 +327,12 @@ void Entity::entityCollision(Entity* first, Entity* second, float deltaTime) {
 
 void Entity::update(float deltatime)
 {
-    //just gravity
-    //vel.x += -cos(0) * manager->gravity * deltatime;
+    
+    //vel.x = vel.x * deltatime;
     vel.y += gravity * deltatime;
 
-    pos.x += vel.x * deltatime;
-    pos.y += vel.y * deltatime;
+    pos.x += vel.x * deltatime * speedMod;
+    pos.y += vel.y * deltatime * speedMod;
 
     
 
@@ -356,34 +392,37 @@ void QuadTree::split()
 //   0, 1, 2, or 3 if the object fits completely within a subnode,
 //   -1 if the object cannot completely fit within a child node.
 int QuadTree::getIndex(const Entity* entity) const {
-    // Compute bounding box of the entity (circle)
-    float circleBounds = entity->pos.x - entity->radius;
-    float diameter = 2 * entity->radius;
-
     int index = -1;
-    float verticalMidpoint = rectangleBounds.x + (rectangleBounds.width / 2.0f);
-    float horizontalMidpoint = rectangleBounds.y + (rectangleBounds.height / 2.0f);
 
-    // Check if it fits completely in the top quadrants.
-    bool topQuadrant = (circleBounds < horizontalMidpoint && circleBounds + diameter < horizontalMidpoint);
-    // Check if it fits completely in the bottom quadrants.
-    bool bottomQuadrant = (circleBounds > horizontalMidpoint);
+    float xMidpoint = rectangleBounds.x + (rectangleBounds.width / 2.0f);  // Horizontal division
+    float yMidpoint = rectangleBounds.y + (rectangleBounds.height / 2.0f);  // Vertical division
 
-    // Check left quadrants.
-    if (circleBounds < verticalMidpoint && circleBounds + diameter < verticalMidpoint) {
-        if (topQuadrant)
-            index = 1;
-        else if (bottomQuadrant)
-            index = 2;
+    float leftEdge = entity->pos.x - entity->radius;
+    float rightEdge = entity->pos.x + entity->radius;
+    float topEdge = entity->pos.y - entity->radius;
+    float bottomEdge = entity->pos.y + entity->radius;
+
+    // Check if completely in top half
+    bool inTopHalf = (bottomEdge < yMidpoint);
+    // Check if completely in bottom half
+    bool inBottomHalf = (topEdge > yMidpoint);
+    // Check if completely in left half
+    bool inLeftHalf = (rightEdge < xMidpoint);
+    // Check if completely in right half
+    bool inRightHalf = (leftEdge > xMidpoint);
+
+    // Determine quadrant (0=top-right, 1=top-left, 2=bottom-left, 3=bottom-right)
+    if (inTopHalf) {
+        if (inRightHalf) return 0;
+        if (inLeftHalf) return 1;
     }
-    // Check right quadrants.
-    else if (circleBounds > verticalMidpoint) {
-        if (topQuadrant)
-            index = 0;
-        else if (bottomQuadrant)
-            index = 3;
+    else if (inBottomHalf) {
+        if (inLeftHalf) return 2;
+        if (inRightHalf) return 3;
     }
-    return index;
+
+    // Circle doesn't fit completely in any quadrant
+    return -1;
 }
 
 
@@ -429,11 +468,38 @@ void QuadTree::insert(Entity* entity)
 
 
 void QuadTree::retrieve(std::vector<Entity*>& returnObjects, Entity* entity) {
+    if(debugThreshold < 0) {
+        debugThreshold = 10;
+		//do stuff here
+    }
     int index = getIndex(entity);
     if (index != -1 && children[0] != nullptr) {
         children[index]->retrieve(returnObjects, entity);
     }
+
+ //   maxCollsionCheckLevels--;
+	//if (maxCollsionCheckLevels > 0) {
+	//	returnObjects.insert(returnObjects.end(), objects.begin(), objects.end());
+	//	
+	//}
     // Add objects from the current node.
     returnObjects.insert(returnObjects.end(), objects.begin(), objects.end());
+ 
 }
 
+void QuadTree::draw(sf::RenderWindow& window) {
+    sf::RectangleShape rect(sf::Vector2f(rectangleBounds.width, rectangleBounds.height));
+    rect.setPosition(sf::Vector2f(rectangleBounds.x, rectangleBounds.y));
+    rect.setFillColor(sf::Color::Transparent);
+    rect.setOutlineThickness(1);
+    rect.setOutlineColor(sf::Color(255, 255, 255, 100)); // Semi-transparent white
+
+    window.draw(rect);
+
+    // Recursively draw child nodes
+    if (children[0] != nullptr) {
+        for (int i = 0; i < 4; i++) {
+            children[i]->draw(window);
+        }
+    }
+}
