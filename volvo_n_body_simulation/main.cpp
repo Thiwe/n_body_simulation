@@ -27,7 +27,7 @@ class QuadTree {
 public:
     // Maximum objects per node and maximum levels before stopping subdivision.
     static const int MAX_OBJECTS = 4;
-    static const int MAX_LEVELS = 8;
+    static const int MAX_LEVELS = 12;
 
    
     QuadTree(int level, const Rectangle& rectangleBounds)
@@ -146,7 +146,7 @@ int main(int argc, char* argv[]) {
         entities.push_back(new Entity(screenWidth, screenHeight, minRadius, maxRadius, spawnLimit, gravity, spawnPositionX, spawnPositionY));
     }
 
-    float initSpawnIntervall = 0.001;
+    float initSpawnIntervall = 0.000000001;
     float spawnIntervall = initSpawnIntervall;
     int indexEntityToSpawn = 1; //start at one since we already spoawned 0
 
@@ -184,7 +184,7 @@ int main(int argc, char* argv[]) {
                 if (entity->active) {
                     quadTree->insert(entity);
                     entity->update(deltaTime);
-                    entity->checkIdle(200);  // Check if entity is idle
+                    //entity->checkIdle(200);  // Check if entity is idle
                     // Run border collision 
 				    entity->borderCollision();
 
@@ -199,30 +199,30 @@ int main(int argc, char* argv[]) {
                     // Only check collision every 10 frames for idle entities
 
                     //borderCollisionThreads.emplace_back(&Entity::borderCollision, entity);
-                    if (!entity->idle || idleFrameCounter % 30 == 0) {
-                        std::vector<Entity*> candidates;
-                        quadTree->retrieve(candidates, entity);
-					    maxCollsionCheckLevels = 4;
-                        for (Entity* other : candidates) {
-                            if (entity != other) {
-                                if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Tab))
-                                    tabPressed = !tabPressed;
+                    std::vector<Entity*> candidates;
+                    quadTree->retrieve(candidates, entity);
+					maxCollsionCheckLevels = 4;
+                    for (Entity* other : candidates) {
+                        if (entity != other) {
+                            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Tab))
+                                tabPressed = !tabPressed;
 
-                                if (tabPressed)
+                            if (tabPressed)
+                            {
+                                std::array line =
                                 {
-                                    std::array line =
-                                    {
-                                        sf::Vertex{entity->pos}                                                                                                                                  ,
-                                        sf::Vertex{other->pos}
-                                    };
+                                    sf::Vertex{entity->pos}                                                                                                                                  ,
+                                    sf::Vertex{other->pos}
+                                };
 
-                                    window.draw(line.data(), line.size(), sf::PrimitiveType::Lines);
-                                }
-                                //collisionThreads.emplace_back(&Entity::entityCollision, entity, entity, other, deltaTime);
-                                entity->entityCollision(entity, other, deltaTime, window);
+                                window.draw(line.data(), line.size(), sf::PrimitiveType::Lines);
                             }
+                            //collisionThreads.emplace_back(&Entity::entityCollision, entity, entity, other, deltaTime);
+                            entity->entityCollision(entity, other, deltaTime, window);
                         }
                     }
+                   /* if (!entity->idle || idleFrameCounter % 30 == 0) {
+                    }*/
                 
 
                     entity->render(window);
@@ -331,8 +331,8 @@ void Entity::update(float deltatime)
     //vel.x = vel.x * deltatime;
     vel.y += gravity * deltatime;
 
-    pos.x += vel.x * deltatime * speedMod;
-    pos.y += vel.y * deltatime * speedMod;
+    pos.x += vel.x * speedMod;
+    pos.y += vel.y * speedMod;
 
     
 
