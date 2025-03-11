@@ -1,373 +1,328 @@
-#include <iostream>
-#include <string>
-#include <vector>
-#include <random>
-#include <queue>
-#define _USE_MATH_DEFINES
-#include <math.h>
 #include <SFML/Graphics.hpp>
+#include <SFML/Window.hpp>
+#include <iostream>
+#include <random>
+#include <string>
+#include <stdexcept> 
+#include <cstdlib>
+#include <algorithm>
+#include <cmath>
 
-#define log(x, y) std::cout << x << y << std::endl;
+using namespace std;
 
-int MAX_LVL = 8;
-
-// Forward declarations - this is what was missing
-class SimulationManager;
-class Entity;
-struct Node;
-
-struct Node {
-    static std::queue<Node*> NodePool;
-
-    int x, y, width, height, lvl;
-
-    Node() : x(0), y(0), width(0), height(0), lvl(0) {}
-
-    Node(int _x, int _y, int _w, int _h, int _lvl) : x(_x), y(_y), width(_w), height(_h), lvl(_lvl)
-    {
-        //add entities from main function to this 
-    }
-
-    std::vector<Node*> children;
-    std::vector<Entity*> entities;
-
-    //lets us add a new entity to the quadtree
-    void Add(Entity& _entity);
-
-
+class Particle
+{
 public:
-    //tests whether an entity is inside the bounding rectangle of the node
-    int Inside(Entity& _entity);
 
-    //used to reset a node
-    void Set(int _x, int _y, int _w, int _h, int _lvl);
-
-};
-
-class SimulationManager {
-public:
-    SimulationManager(int screenWidth, int screenHeight, float minRadius, float maxRadius, float spawnLimit, float gravity, float spawnPositionX, float spawnPositionY)
-        : screenWidth(screenWidth),
-        screenHeight(screenHeight),
-        minRadius(minRadius),
-        maxRadius(maxRadius),
-        spawnLimit(spawnLimit),
-        gravity(gravity),
-        spawnPositionX(spawnPositionX),
-        spawnPositionY(spawnPositionY) {}
-
-    float getRandRadius() {
-        // Thread-local to avoid contention in multithreaded code
-        static thread_local std::mt19937 generator(std::random_device{}());
-        std::uniform_int_distribution<int> distribution(minRadius, maxRadius);
-        return distribution(generator);
-    };
-
-
-    void ConstructQuadTree(Node* root, int part_count, std::vector<Entity*> entities, float deltaTime);
-
-public: //should ´be private
-    int screenWidth;
-    int screenHeight;
-    float minRadius;
-    float maxRadius;
-    float spawnLimit;
+    sf::CircleShape pShape;
+    sf::Vector2f velocity;
+    sf::Vector2f position;
     float gravity;
-    float spawnPositionX;
-    float spawnPositionY;
+    float widthBound;
+    float heightBound;
+    float mass = 1.f;
+
+    Particle(float radius, sf::Vector2f position, float gravity, float widthBound, float heightBound, sf::Color color, sf::Vector2f velocity)
+        : position(position), gravity(gravity), widthBound(widthBound), heightBound(heightBound), velocity(velocity)
+    {
+        pShape.setRadius(radius);
+        pShape.setOrigin(sf::Vector2f(radius, radius));
+        pShape.setFillColor(color);
+        pShape.setPosition(position);
+        mass /= radius;
+    }
+
+    void update(float deltaTime);
+    void borderCheck();
+    void particleCollisionCheck(Particle* other);
 };
 
-class Entity {
+struct GridCell {
+    int xPos;
+    int yPos;
+    vector<Particle*> particles;
+};
+
+class Grid {
 public:
-    Entity(SimulationManager* manager)
-        : manager(manager), radius(manager->getRandRadius()), pos(manager->spawnPositionX, manager->spawnPositionY)
+    int cellSize;
+    int numRows;
+    int numColumns;
+    vector< vector<GridCell> > cells;
+
+
+    Grid(int numRows, int numColumns, int value, float cellSize)
+        : numRows(numRows), numColumns(numColumns), cellSize(cellSize)
     {
-        shape = sf::CircleShape(radius);
-        shape.setOrigin(sf::Vector2f{ radius, radius });
-        shape.setPosition(sf::Vector2f{ manager->spawnPositionX, manager->spawnPositionY });
-        shape.setFillColor(sf::Color::Green);
-        shape.setPointCount(20);
-        vel.x = 1.f;
-    }
+        cells.resize(numRows, vector<GridCell>(numColumns));
 
-    void update(float deltatime);
-    void render(sf::RenderWindow& window);
-    void borderCollision();
-    void entityCollision(Entity* first, Entity* second, float deltaTime);
-
-
-public: //should be oprivate but for speedy efficiency
-    SimulationManager* manager = nullptr;
-    sf::Vector2f pos;
-    sf::Vector2f vel;
-    sf::CircleShape shape;
-    float radius;
-
-};
-
-std::queue<Node*> Node::NodePool;
-void InitializeNodePool(int initialSize = 1000)
-{
-    for (int i = 0; i < initialSize; i++) {
-        Node::NodePool.push(new Node());
-    }
-}
-
-//Window size, min/max circle radius values, spawn limit, and gravity are given as command line arguments to the program.
-int main(int argc, char* argv[]) {
-    if (argc < 9) {
-        std::cout << "Usage: " << argv[0] << " <window_size> <spawn_position> <input_variable>" << std::endl;
-        return 1;
-    }
-
-    size_t screenWidth = std::stoi(argv[1]);
-    size_t screenHeight = std::stoi(argv[2]);
-    float minRadius = std::stof(argv[3]);
-    float maxRadius = std::stof(argv[4]);
-    float spawnLimit = std::stof(argv[5]);
-    float gravity = std::stof(argv[6]);
-    float spawnPositionX = std::stof(argv[7]);
-    float spawnPositionY = std::stof(argv[8]);
-
-    // Initialize the node pool
-    InitializeNodePool(10000);
-   
-    SimulationManager simManager(screenWidth, screenHeight, minRadius, maxRadius, spawnLimit, gravity, spawnPositionX, spawnPositionY);
-    //====== CHANGE THIS TO MAP ORT TUPLE ===========
-    std::vector<Entity*> preSpawnedEntities;
-    for (int i = 0; i <= spawnLimit; i++) {
-        preSpawnedEntities.push_back(new Entity(&simManager));
-    }
-    std::vector<Entity*> entities;
-    entities.push_back(preSpawnedEntities[0]);
-
-
-    float initSpawnIntervall = 0.05;
-    float spawnIntervall = initSpawnIntervall;
-    int indexEntityToSpawn = 1; //start at one since we already spoawned 0
-
-
-    sf::Clock clock;
-    sf::RenderWindow window(sf::VideoMode({ screenWidth, screenHeight }), "SFML works!");
-
-    Node root;
-
-    while (window.isOpen())
-    {
-        //restart() returns a time object which ahve asSeconds as member
-        float deltaTime = clock.restart().asSeconds();
-        
-        while (const std::optional event = window.pollEvent())
+        for (int row = 0; row < numRows; row++)
         {
-            if (event->is<sf::Event::Closed>() || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape))
-                window.close();
-        }
-
-        window.clear();
-        simManager.ConstructQuadTree(&root, spawnLimit, entities, deltaTime);
-        for (auto entity : entities) {            
-
-            entity->render(window);
-        }
-        //change the whole thing to map or tuple with <entity, bool used>
-        if (spawnIntervall < 0) {
-            std::cout << "somehting is spawning" << std::endl;
-            spawnIntervall = initSpawnIntervall;
-            if (indexEntityToSpawn  != preSpawnedEntities.size()-1) {
-                entities.push_back(preSpawnedEntities[indexEntityToSpawn]);
-                indexEntityToSpawn++;
-                std::cout << indexEntityToSpawn << std::endl;
-
-            }
-            
-        }
-        spawnIntervall -= deltaTime;
-        window.display();
-    }
-
-    return 0;
-}
-
-void Entity::borderCollision()
-{
-    // Right wall collision
-    if (pos.x + radius > manager->screenWidth) {
-        pos.x = manager->screenWidth - radius;  // Prevent going out of bounds
-        vel.x *= -0.8f; // Reverse velocity with damping to simulate energy loss
-    }
-    // Left wall collision
-    else if (pos.x - radius < 0) {
-        pos.x = radius;
-        vel.x *= -0.8f;
-    }
-
-    // Bottom wall collision
-    if (pos.y + radius > manager->screenHeight) {
-        pos.y = manager->screenHeight - radius;
-        vel.y *= -0.8f; // Reverse velocity to simulate bouncing
-    }
-    // Top wall collision
-    else if (pos.y - radius < 0) {
-        pos.y = radius;
-        vel.y *= -0.8f;
-    }
-}
-
-void Entity::entityCollision(Entity* first, Entity* second, float deltaTime) {
-
-    sf::Vector2f delta = first->pos - second->pos;
-    float distance = std::sqrt(delta.x * delta.x + delta.y * delta.y);
-    float overlap = (first->radius + second->radius) - distance;
-
-
- /* log("deltax is : ", delta.x);
-    log("deltay is : ", delta.y);
-    log("distance is : ", distance);
-    log("overlap is : ", overlap);
-*/
-
-    if (distance < first->radius + second->radius) {
-        // **Push apart**
-        sf::Vector2f normal = delta / distance; // Normalize direction
-        first->pos += normal * (overlap / 2.f);
-        second->pos -= normal * (overlap / 2.f);
-
-        // Calculate dot product of velocity and normal for each entity
-        float dotProductFirst = first->vel.x * normal.x + first->vel.y * normal.y;
-        float dotProductSecond = second->vel.x * normal.x + second->vel.y * normal.y;
-
-        // Update velocities - project velocities onto the normal and reflect
-        first->vel.x -= 2.0f * dotProductFirst * normal.x;
-        first->vel.y -= 2.0f * dotProductFirst * normal.y;
-
-        second->vel.x -= 2.0f * dotProductSecond * normal.x;
-        second->vel.y -= 2.0f * dotProductSecond * normal.y;
-    
-    }
-
-}
-
-void SimulationManager::ConstructQuadTree(Node* root, int part_count, std::vector<Entity*> entities, float deltaTime)
-{
-    root->Set(0, 0, root->width, root->height, 0);
-
-    for (int i = 0; i < entities.size(); i++)
-    {
-        entities[i]->borderCollision();
-        //entities[i]->borderCollision();
-        root->Add(*entities[i]);
-        entities[i]->update(deltaTime);
-        for (int j = 0; j < entities.size(); j++) {
-            if (entities[i] == entities[j])
-                break;
-            entities[i]->entityCollision(entities[i], entities[j], deltaTime);
-        }
-        root->Add(*entities[i]);
-    }
-}
-
-void Entity::update(float deltatime)
-{
-    //just gravity
-    //vel.x += -cos(0) * manager->gravity * deltatime;
-    vel.y += manager->gravity * deltatime * 10;
-
-    pos.x += vel.x * deltatime;
-    pos.y += vel.y * deltatime;
-
-}
-
-void Entity::render(sf::RenderWindow& window)
-{
-    //wrapAround(sf::Vector2u(1200, 900)); // call wrap function after updating position
-    shape.setPosition(pos);
-    window.draw(shape);
-
-}
-
-void Node::Add(Entity& _entity)
-{
-    if (entities.size() < 4 || lvl == MAX_LVL)
-    {
-        entities.push_back(&_entity);
-    }
-    else
-    {
-        if (children.size() == 0)
-        {
-            // Check if we have enough nodes
-            if (NodePool.size() < 4) {
-                // Add more nodes to the pool or don't subdivide
-                return;
-            }
-            Node* n1 = NodePool.front(); 
-            NodePool.pop();
-            Node* n2 = NodePool.front();
-            NodePool.pop();
-            Node* n3 = NodePool.front();
-            NodePool.pop();
-            Node* n4 = NodePool.front();
-            NodePool.pop();
-
-            n1->Set(x, y, width / 2, height / 2, lvl + 1);
-            children.push_back(n1);
-            n2->Set(x + width / 2, y, width / 2, height / 2, lvl + 1);
-            children.push_back(n2);
-            n3->Set(x, y + height / 2, width / 2, height / 2, lvl + 1);
-            children.push_back(n3);
-            n4->Set(x + width / 2, y + height / 2, width / 2, height / 2, lvl + 1);
-            children.push_back(n4);
-
-
-            for (auto* entity : entities)
+            for (int col = 0; col < numColumns; col++)
             {
-                for (auto* childNode : children)
-                {
-                    if (childNode->Inside(*entity))
-                    {
-                        childNode->Add(*entity);
-                    } 
+                cells[row][col].xPos = col * cellSize;
+                cells[row][col].yPos = row * cellSize;
+            }
+        }
+
+    }
+
+    void checkCellsCollisions(GridCell& current, GridCell& other) {
+        for (auto& particle : current.particles) {
+            for (auto& otherParticle : other.particles) {
+                if(particle != otherParticle) {
+                    if()
+        }
+    }
+
+
+    void find_collisions_grid() {
+        for (int row = 1; row < numRows - 1; row++)
+        {
+            for (int col = 1; col < numColumns - 1; col++)
+            {
+                auto& currentCell = cells[row][col];
+                for (int dx = -1; dx <= 1; ++dx) {
+                    for (int dy = -1; dy <= 1; ++dx) {
+                        auto& otherCell = cells[row+dx][col+dy];
+                        checkCellsCollisions(currentCell, otherCell);
+                    }
                 }
             }
         }
+    }
 
-        for (auto* childNode : children)
+};
+
+//Main loop taking command arguments
+int main(int argc, char* argv[])
+{
+    //Check if we have correct amount of arguments needed to run application
+    if (argc != 7)
+    {
+        cerr << "Error: You must provide following arguments: 'windowWidth' 'windowHeight' 'spawnLimit' 'minParticleRadius' 'maxParticleRadius' 'gravity'" << endl;
+        return 1;
+    }
+
+    //Check if arguments are convertable and valid
+    for (int i = 1; i < argc; ++i)
+    {
+        cout << "Argument " << i << ": " << argv[i] << endl;
+
+        try
         {
-            if (childNode->Inside(_entity))
+            if (i > 3)
             {
-                childNode->Add(_entity);
+                float intArg = stof(argv[i]);
+                cout << "Float argument: " << intArg << endl;
+            }
+            else
+            {
+                int intArg = stoi(argv[i]);
+                cout << "Integer argument: " << intArg << endl;
+            }
+        }
+        catch (const invalid_argument& e)
+        {
+            cerr << "Error: Argument" << i << "is of wrong type!" << endl;
+            return 1;
+        }
+        catch (const out_of_range& e)
+        {
+            cerr << "Error: The" << i << "argument is out of range!" << endl;
+            return 1;
+        }
+    }
+
+    //Print string to give indication that arguments passed through correctly
+    cout << "Application is running!" << endl;
+
+    //Storing command arguments
+    unsigned int windowWidth = stoi(argv[1]);
+    unsigned int windowHeight = stoi(argv[2]);
+    unsigned int spawnLimit = stoi(argv[3]);
+    float minParticleRadius = stof(argv[4]);
+    float maxParticleRadius = stof(argv[5]);
+    float gravity = stof(argv[6]);
+
+    //Initiate random varibles
+    random_device rd;
+    mt19937 gen(rd());
+    uniform_int_distribution<> color(0, 255);
+    uniform_real_distribution<float> radius(minParticleRadius, maxParticleRadius);
+    uniform_real_distribution<float> vel(0.5f, 1.0f);
+
+    sf::RenderWindow window(sf::VideoMode({ windowWidth, windowHeight }), "Simulation window");
+
+    //Instanciate a objects
+    vector<Particle*> particles;
+    for (int i = 0; i < spawnLimit; i++)
+    {
+        particles.push_back(new Particle(radius(gen), sf::Vector2f(maxParticleRadius * 2.f, maxParticleRadius * 2.f), gravity, static_cast<float>(windowWidth), static_cast<float>(windowHeight), sf::Color(color(gen), color(gen), color(gen)), sf::Vector2f(vel(gen), 0.0f)));
+    }
+
+    //Clock for deltaTime
+    sf::Clock clock;
+    int particlesProcessed = 0; //Tracks how many particles we've processed so far
+    float timeSinceLastIncrease = 0.0f; //Time passed since last time we increased processed particles
+    float increaseInterval = .01f; //How often to increase particlesProcessed (in seconds)
+
+    Grid screenGrid(64, 64, 10, 10);
+
+    //Main loop
+    while (window.isOpen())
+    {
+
+
+        //Get time between frames and convert to second
+        float deltaTime = clock.restart().asSeconds();
+
+        //Loops if there is an queued event
+        while (const optional event = window.pollEvent())
+        {
+            //Close application if "ESC" key is pressed
+            if (event->is<sf::Event::Closed>() || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape))
+            {
+                cout << "Number of particles spawned: " << particlesProcessed << endl;
+                window.close();
             }
         }
 
+        //Increment timeSinceLastIncrease
+        timeSinceLastIncrease += deltaTime;
+
+        //Every 'increaseInterval' seconds, increase the number of particles to process
+        if (timeSinceLastIncrease >= increaseInterval) {
+            particlesProcessed += 1; //Increase the number of particles to process by 1 every interval
+            timeSinceLastIncrease = 0.0f; //Reset the timer
+        }
+
+        //Process particles incrementally
+        for (int i = 0; i <= particlesProcessed && i < particles.size(); ++i)
+        {
+            Particle* p = particles[i];
+
+            //Loops through pointers for particlesProcessed and checks for collision with other particles
+            for (int j = 0; j <= particlesProcessed && j < particles.size(); ++j)
+            {
+                Particle* pOther = particles[j];
+                p->particleCollisionCheck(pOther);
+            }
+
+            p->update(deltaTime);
+   
+        }
+
+        //Clear the window
+        window.clear();
+
+
+        for (int i = 0; i <= particlesProcessed && i < particles.size(); ++i) {
+            Particle* p = particles[i];
+            //Draw all processed particles to screen
+            window.draw(p->pShape);
+        }
+
+        //Display the window contents
+        window.display();
+
+        //Ensure we don't process more than the total number of particles
+        if (particlesProcessed > particles.size())
+        {
+            particlesProcessed = particles.size();
+        }
+
+    }
+
+    //Clean up the particles
+    for (Particle* p : particles)
+    {
+        delete p;
+    }
+
+    return 0;
+};
+
+void Particle::update(float deltaTime)
+{
+    //Change velocity with time affected by gravity
+    velocity.y += gravity * deltaTime;
+    if (velocity.x != 0.0f)
+        velocity.x *= 0.9999f;
+
+    //Checks if collision with border and updates position.
+    borderCheck();
+    position = pShape.getPosition();
+    pShape.setPosition({ position.x + velocity.x, position.y + velocity.y });
+}
+
+void Particle::borderCheck()
+{
+    //Check if we collide with border and change velocity accordingly
+    if (position.y + pShape.getRadius() > heightBound)
+    {
+        pShape.setPosition({ position.x, heightBound - pShape.getRadius() });
+        velocity.y *= -0.9f;
+    }
+    else if (position.y - pShape.getRadius() < 0.0f)
+    {
+        pShape.setPosition({ position.x, 0.0f + pShape.getRadius() });
+        velocity.y *= -0.9f;
+    }
+    else if (position.x + pShape.getRadius() > widthBound)
+    {
+        pShape.setPosition({ widthBound - pShape.getRadius(), position.y });
+        velocity.x *= -0.9f;
+    }
+    else if (position.x - pShape.getRadius() < 0.0f)
+    {
+        pShape.setPosition({ 0.0f + pShape.getRadius(), position.y });
+        velocity.x *= -0.9f;
     }
 }
 
-//checks whether part of the bounding circle of the entity falls within the bounding region of the node.
-int Node::Inside(Entity& _entity)
+void Particle::particleCollisionCheck(Particle* other)
 {
-    float _px0 = _entity.pos.x - _entity.radius;
-    float _py0 = _entity.pos.y - _entity.radius;
-    float _px1 = _entity.pos.x + _entity.radius;
-    float _py1 = _entity.pos.y + _entity.radius;
+    //Calculates the distance and overlap between particles
+    sf::Vector2f delta = this->position - other->position;
+    float distance = sqrt(delta.x * delta.x + delta.y * delta.y);
+    float overlap = (this->pShape.getRadius() + other->pShape.getRadius()) - distance;
 
+    //Checks if distance is smaller than both particles radius combined
+    if (distance < (this->pShape.getRadius() + other->pShape.getRadius()))
+    {
+        //Safety check so distance can not be equal to 0.0f
+        if (distance == 0)
+            distance += 0.1f;
 
-    if ((_px0 >= x && _px0 <= (x + width)) || (_px1 >= x && _px1 <= (x + width)) &&
-        (_py0 >= y && _py0 <= (y + height)) || (_py1 >= y && _py1 <= (y + height)))
-        return 1;
-    else
-        return 0;
-}
+        //Gets the direction
+        sf::Vector2f normal = delta / distance;
 
-void Node::Set(int _x, int _y, int _w, int _h, int _lvl)
-{
-    for (auto child : children)
-        NodePool.push(child);
-    children.clear();
-    entities.clear();
-    x = _x;
-    y = _y;
-    width = _w;
-    height = _h;
-    lvl = _lvl;
-}
+        //Move both particles away from each other as a safety check
+        this->position += normal * (overlap / 2.f);
+        other->position -= normal * (overlap / 2.f);
 
+        //Calculate relative velocity along the normal direction
+        sf::Vector2f relativeVelocity = this->velocity - other->velocity;
+        float dotProduct = relativeVelocity.x * normal.x + relativeVelocity.y * normal.y;
+
+        //If the particles are moving towards each other, apply collision response
+        if (dotProduct < 0)
+        {
+            //This can be modified to simulate inelastic collisions (less than 1)
+            float coefficientOfRestitution = .75f;
+
+            //Calculate the force scalar
+            float force = -(1 + coefficientOfRestitution) * dotProduct;
+            //Taking the mass of the particles into count
+            force /= (1 / this->mass) + (1 / other->mass);
+
+            //Apply the force to to the correct direction
+            sf::Vector2f forceVector = normal * force;
+
+            //Apply force to ecah particles velocities
+            this->velocity += forceVector / this->mass;
+            other->velocity -= forceVector / other->mass;
+        }
+    }
+};
